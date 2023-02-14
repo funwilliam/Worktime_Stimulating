@@ -1,0 +1,4 @@
+Repeat_Mode
+periodically repeated
+nonstop if possible
+once
