@@ -1,6 +1,9 @@
 import pandas as pd
 import re
 from colorama import Fore, Back, Style
+import plotly as py
+import plotly.figure_factory as ff
+import plotly.express as px
 
 # 使pandas的console文字輸出可以對齊(中文適用)
 pd.set_option('display.unicode.ambiguous_as_wide', True)
@@ -199,7 +202,7 @@ class Scheduler(Timeline):
         # 任務排程註冊表。格式:pd.DataFarme{index:[動作編號],col:[狀態, 時效戳, 註冊戳, 鎖定者]}
         self.__registry: pd = pd.DataFrame()
         # 紀錄檔。
-        self.__records: list = []
+        self.__records: dict = {}
 
         if isinstance(scheduler, dict):
             try:
@@ -231,6 +234,8 @@ class Scheduler(Timeline):
         })
 
         self.__registry = df.set_index('動作編號')
+        self.__records = dict.fromkeys(
+            self.__tasks.keys(), pd.DataFrame(columns=['狀態', '起始時間', '結束時間']))
 
     def __str__(self):
         df = self.__registry.reset_index()
@@ -332,6 +337,8 @@ class Scheduler(Timeline):
             if finished_tasks or init_flag:
                 init_flag = False
 
+                snapshot_st = pd.DataFrame(self.__registry.to_dict())
+
                 # 解除所有本回合運行中以外的排程鎖定
                 unlocked_tasks = list(
                     set(all_tasks).difference(set(executing_tasks)))
@@ -379,8 +386,12 @@ class Scheduler(Timeline):
                                     self.regist(tasks_id=task,
                                                 status='TASK-凍結')
 
+                # 紀錄
+                snapshot_nd = pd.DataFrame(self.__registry.to_dict())
+                self.record(snapshot_st, snapshot_nd)
+
                 # [測試] 當本回合有異動，就印出狀態總表
-                print(self)
+                # print(self)
 
             # 當本回合沒有遇到Task完成的事件時，則休眠
             else:
@@ -389,6 +400,40 @@ class Scheduler(Timeline):
             # 計時器迭代
             self += 1
 
+    # 紀錄tasks運行狀態變化
+    def record(self, before, after):
+        next_checkpoint = min(self.__registry['時效戳'].dropna())
+        for task_id in self.__tasks.keys():
+
+            if before.at[task_id, '狀態'] == after.at[task_id, '狀態']:
+                self.__records[task_id]['結束時間'].iat[-1] = next_checkpoint
+            else:
+                s = pd.DataFrame(
+                    {'狀態': [after.at[task_id, '狀態']], '起始時間': [self.ptr], '結束時間': [next_checkpoint]})
+                self.__records[task_id] = pd.concat(
+                    [self.__records[task_id], s], axis=0, ignore_index=True)
+
+    def to_gannta(self):
+        # 創建一個空的plotly.gantt參數格式的datafeame
+        df = pd.DataFrame({'Task': [], 'Start': [], 'Finish': [], 'Status': []})
+        # 讀取紀錄並轉換格式
+        for key in self.records:
+            col = {'狀態': 'Status', '起始時間': 'Start', '結束時間': 'Finish'}
+            d = pd.DataFrame(self.records[key].to_dict())
+            # d = d[d['狀態'] != 'TASK-排程鎖定']
+            
+            # 備註：self.__tasks[key][0]對應到task的name欄位
+            d['Task'] = self.__tasks[key][0]
+
+            d = d.rename(columns=col)
+            df = pd.concat([df, d], ignore_index=True)
+
+        df['Start']=pd.to_datetime(df['Start'],unit='s')
+        df['Finish']=pd.to_datetime(df['Finish'],unit='s')
+        print(df)
+        fig=ff.create_gantt(df,group_tasks = True, index_col = 'Status', show_colorbar=True)
+        pyoff = py.offline.plot
+        pyoff(fig, filename = 'test.html')
 
 actionList_filename = '動作.csv'
 dependency_filename = '相依.txt'
@@ -449,3 +494,4 @@ if __name__ == '__main__':
 
     sc = Scheduler(timeline=timeline, tasks=actions, dependency=dependency)
     sc.calc()
+    sc.to_gannta()
