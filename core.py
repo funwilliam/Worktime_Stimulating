@@ -1,11 +1,17 @@
-import pandas as pd
+import os
 import re
-from colorama import Fore, Back, Style
+import time
+import pandas as pd
 import plotly as py
 import plotly.figure_factory as ff
-import plotly.express as px
 
-# 使pandas的console文字輸出可以對齊(中文適用)
+from cursor import cursor
+from colorama import init, Fore, Back, Style
+
+# 為了使colorama在cmd正常使用，導入colorama.init()。如果僅需在vscode內使用colorama則可以省略。
+init(convert=True)
+
+# 調用此設置，可以使pandas的console輸出對齊(中文適用)。如果在jupiter內使用pandas，則可以省略。
 pd.set_option('display.unicode.ambiguous_as_wide', True)
 pd.set_option('display.unicode.east_asian_width', True)
 
@@ -300,7 +306,11 @@ class Scheduler(Timeline):
 
     # 計算
     def calc(self):
+        # 初始化標籤
         init_flag = True
+        # 清除console歷史紀錄
+        os.system('cls')
+
         # 計時器啟動
         while not self.is_end():
             """ 規則群組檢查當前狀態與執行指針移動，檢查與解鎖到期程序的鎖定狀態 """
@@ -391,11 +401,14 @@ class Scheduler(Timeline):
                 self.record(snapshot_st, snapshot_nd)
 
                 # [測試] 當本回合有異動，就印出狀態總表
-                # print(self)
+                # self.print(mode='log')
 
-            # 當本回合沒有遇到Task完成的事件時，則休眠
+            # 當本回合沒有遇到Task完成的事件時，不做事
             else:
                 pass
+
+            # [測試] 運行儀錶板
+            self.print(mode='monitor')
 
             # 計時器迭代
             self += 1
@@ -413,27 +426,47 @@ class Scheduler(Timeline):
                 self.__records[task_id] = pd.concat(
                     [self.__records[task_id], s], axis=0, ignore_index=True)
 
+    # 將紀錄轉換成plotly.gannta的參數格式
     def to_gannta(self):
         # 創建一個空的plotly.gantt參數格式的datafeame
-        df = pd.DataFrame({'Task': [], 'Start': [], 'Finish': [], 'Status': []})
+        df = pd.DataFrame(
+            {'Task': [], 'Start': [], 'Finish': [], 'Status': []})
         # 讀取紀錄並轉換格式
         for key in self.records:
             col = {'狀態': 'Status', '起始時間': 'Start', '結束時間': 'Finish'}
             d = pd.DataFrame(self.records[key].to_dict())
             # d = d[d['狀態'] != 'TASK-排程鎖定']
-            
+
             # 備註：self.__tasks[key][0]對應到task的name欄位
             d['Task'] = self.__tasks[key][0]
 
             d = d.rename(columns=col)
             df = pd.concat([df, d], ignore_index=True)
 
-        df['Start']=pd.to_datetime(df['Start'],unit='s')
-        df['Finish']=pd.to_datetime(df['Finish'],unit='s')
-        print(df)
-        fig=ff.create_gantt(df,group_tasks = True, index_col = 'Status', show_colorbar=True)
+        # 把單位設定為秒
+        df['Start'] = pd.to_datetime(df['Start'], unit='s')
+        df['Finish'] = pd.to_datetime(df['Finish'], unit='s')
+        
+        # print(df)
+        
+        # 創建plotly.figure_factory甘特圖模板
+        fig = ff.create_gantt(df, group_tasks=True, index_col='Status', show_colorbar=True)
+        # 使用plotly離線版產生器
         pyoff = py.offline.plot
-        pyoff(fig, filename = 'test.html')
+        # 輸出為html檔案
+        pyoff(fig, filename='test.html')
+
+    # console的運行儀表板
+    def print(self, mode: str = 'monitor'):
+        if mode == 'monitor':
+            cursor.gotoxy(0, 0)
+            print(' '*len(self.__str__()))
+            cursor.gotoxy(0, 0)
+            print(self)
+            time.sleep(0.1)
+        elif mode == 'log':
+            print(self)
+
 
 actionList_filename = '動作.csv'
 dependency_filename = '相依.txt'
@@ -450,7 +483,7 @@ def check_and_open_CSVfile(filepath: str = '') -> pd:
         try:
             df = pd.read_csv(filepath, encoding=decode,
                              on_bad_lines='skip')
-            print('data-' + decode + '-success!!')
+            # print('data-' + decode + '-success!!')
             return df
         except:
             pass
@@ -490,7 +523,7 @@ def IO_dependency(filename: str = '') -> None:
 if __name__ == '__main__':
     IO_actions()
     IO_dependency()
-    timeline = {'start': -50, 'end': 500, 'ptr': 0, 'unit': 1}
+    timeline = {'start': 0, 'end': 500, 'ptr': 0, 'unit': 1}
 
     sc = Scheduler(timeline=timeline, tasks=actions, dependency=dependency)
     sc.calc()
